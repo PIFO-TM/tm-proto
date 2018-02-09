@@ -3,38 +3,11 @@ import sys, os
 from scapy.all import *
 import simpy
 from heapq import heappush, heappop
-
-class StdMetadata(object):
-    def __init__(self, pkt_len, src_port, dst_port, ranks, leaf_node):
-        self.pkt_len = pkt_len
-        self.src_port = src_port
-        self.dst_port = dst_port
-        self.ranks = ranks
-        self.leaf_node = leaf_node
-
-    def __str__(self):
-        return '{{ pkt_len: {}, src_port: {:08b}, dst_port: {:08b}, ranks: {}, leaf_node: {}}}'.format(self.pkt_len, self.src_port, self.dst_port, self.ranks, self.leaf_node)
-
-def pad_pkt(pkt, size):
-    if len(pkt) >= size:
-        return pkt
-    else:
-        return pkt / ('\x00'*(size - len(pkt)))
-
-class HW_sim_object(object):
-    def __init__(self, env, period):
-        self.env = env
-        self.period = period
-
-    def clock(self):
-        yield self.env.timeout(self.period)
-
-    def wait_clock(self):
-        return self.env.process(self.clock())
+from hwsim_utils import *
 
 class PIFO(HW_sim_object):
     def __init__(self, env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, write_latency=1, read_latency=1):
-        super(BRAM, self).__init__(env, period)
+        super(PIFO, self).__init__(env, period)
         self.r_in_pipe = r_in_pipe
         self.r_out_pipe = r_out_pipe
         self.w_in_pipe = w_in_pipe
@@ -163,6 +136,7 @@ class Scheduling_tree(HW_sim_object):
         """
         State machine to enqueue into the scheduling tree
         """
+        self.w_out_pipe.put(1) # to indicate ready to receive
         while True:
             # wait to receive incoming data
             (meta, pkt) = yield self.w_in_pipe.get()
@@ -185,6 +159,7 @@ class Scheduling_tree(HW_sim_object):
                 yield node.w_out_pipe.get()
                 parent = node.parent
                 child_ID = node.ID
+            self.w_out_pipe.put(1) # to indicate ready to receive
 
     def read_sm(self):
         """
