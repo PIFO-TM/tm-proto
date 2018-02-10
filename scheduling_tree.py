@@ -27,7 +27,7 @@ class PIFO(HW_sim_object):
         """
         State machine to write incomming data into pifo
         """
-        while True:
+        while not self.sim_done:
             # wait to receive incoming data
             (rank, data) = yield self.w_in_pipe.get()
             # model write latency
@@ -43,7 +43,7 @@ class PIFO(HW_sim_object):
         """
         State machine to read data from memory
         """
-        while True:
+        while not self.sim_done:
             # wait to receive a read request
             read_req = yield self.r_in_pipe.get()
             # model read latency
@@ -72,17 +72,17 @@ class Scheduling_tree_node(PIFO):
         return '[{}, [{}]]'.format(self.ID, ','.join(children_strs))
 
 class Scheduling_tree(HW_sim_object):
-    def __init__(self, env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, shape):
+    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, shape):
         """Shape specifies the shape of the scheduling tree:
            e.g. single pifo  --  0
                 2-level tree -- {0: [1, 2]}
                 3-level tree -- {0: [{1: [3, 4]}, {2: [5, 6]}]}
         """
         super(Scheduling_tree, self).__init__(env, period)
-        self.r_in_pipe = r_in_pipe
-        self.r_out_pipe = r_out_pipe
-        self.w_in_pipe = w_in_pipe
-        self.w_out_pipe = w_out_pipe
+        self.ready_in_pipe = ready_in_pipe
+        self.ready_out_pipe = ready_out_pipe
+        self.pkt_in_pipe = pkt_in_pipe
+        self.pkt_out_pipe = pkt_out_pipe
         self.shape = shape
         # this maps the node ID to the node itself 
         self.nodes = {}
@@ -136,10 +136,10 @@ class Scheduling_tree(HW_sim_object):
         """
         State machine to enqueue into the scheduling tree
         """
-        self.w_out_pipe.put(1) # to indicate ready to receive
-        while True:
+        while not self.sim_done:
+            self.ready_in_pipe.put(1) # to indicate ready to receive
             # wait to receive incoming data
-            (meta, pkt) = yield self.w_in_pipe.get()
+            (meta, pkt) = yield self.pkt_in_pipe.get()
 
             level = 0
             # enqueue the pkt and metadata into the leaf node 
@@ -159,24 +159,23 @@ class Scheduling_tree(HW_sim_object):
                 yield node.w_out_pipe.get()
                 parent = node.parent
                 child_ID = node.ID
-            self.w_out_pipe.put(1) # to indicate ready to receive
 
     def read_sm(self):
         """
         State machine to dequeue from the scheduling tree
         """
-        while True:
+        while not self.sim_done:
             # wait to receive a read request
-            read_req = yield self.r_in_pipe.get()
+            read_req = yield self.ready_out_pipe.get()
 
             # always remove from the root first
-            self.tree.read_in_pipe.put(1)
+            self.tree.r_in_pipe.put(1)
             (rank, data) = yield self.tree.r_out_pipe.get()
             while type(data) == int:
                 # data is a pointer to another node
                 node = self.nodes[data]
-                node.read_in_pipe.put(1)
-                (rank, data) = yield node.read_out_pipe.get()
+                node.r_in_pipe.put(1)
+                (rank, data) = yield node.r_out_pipe.get()
 
             try:
                 assert(type(data) == tuple)
@@ -185,7 +184,7 @@ class Scheduling_tree(HW_sim_object):
                 sys.exit(1)
 
             # data is now the metadata and pkt
-            self.read_out_pipe.put(data)
+            self.pkt_out_pipe.put(data)
 
 
 

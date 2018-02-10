@@ -24,6 +24,7 @@ class HW_sim_object(object):
     def __init__(self, env, period):
         self.env = env
         self.period = period
+        self.sim_done = False
 
     def clock(self):
         yield self.env.timeout(self.period)
