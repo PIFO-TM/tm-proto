@@ -21,9 +21,11 @@ class Switch(HW_sim_object):
         tm_egress_pkt_pipe = simpy.Store(env)
         ingress_egress_pipe = simpy.Store(env)
 
-        self.ingress = IngressPipe(env, period, self.ready_in_pipe, ingress_tm_ready_pipe, self.pkt_in_pipe, ingress_tm_pkt_pipe)
+        self.global_state = Global_state()
+
+        self.ingress = IngressPipe(env, period, self.ready_in_pipe, ingress_tm_ready_pipe, self.pkt_in_pipe, ingress_tm_pkt_pipe, self.global_state)
         self.tm = Scheduling_tree(env, period, ingress_tm_ready_pipe, tm_egress_ready_pipe, ingress_tm_pkt_pipe, tm_egress_pkt_pipe, sched_tree_shape)
-        self.egress = EgressPipe(env, period, tm_egress_ready_pipe, self.ready_out_pipe, tm_egress_pkt_pipe, self.pkt_out_pipe, self.start_dequeue_pipe)
+        self.egress = EgressPipe(env, period, tm_egress_ready_pipe, self.ready_out_pipe, tm_egress_pkt_pipe, self.pkt_out_pipe, self.start_dequeue_pipe, self.global_state)
 
     def cleanup_sim(self):
         self.ingress.sim_done = True
@@ -32,3 +34,11 @@ class Switch(HW_sim_object):
         for node in self.tm.nodes.values():
             node.sim_done = True
         yield self.wait_clock()
+
+
+class Global_state(object):
+    def __init__(self):
+        # needed for HPFQ (STFQ version)
+        self.virtual_time = 0
+
+

@@ -3,12 +3,14 @@ import simpy
 from hwsim_utils import HW_sim_object, StdMetadata
 
 class IngressPipe(HW_sim_object):
-    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe):
+    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, global_state):
         super(IngressPipe, self).__init__(env, period)
         self.ready_in_pipe = ready_in_pipe
         self.ready_out_pipe = ready_out_pipe
         self.pkt_in_pipe = pkt_in_pipe
         self.pkt_out_pipe = pkt_out_pipe
+
+        self.global_state = global_state
 
         self.pkt_cnt = 0
 
@@ -46,8 +48,6 @@ class IngressPipe(HW_sim_object):
         meta.leaf_node = 0
         self.pkt_cnt += 1
         yield self.wait_clock()
-
-
 
 
 

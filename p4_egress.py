@@ -3,7 +3,7 @@ import simpy
 from hwsim_utils import *
 
 class EgressPipe(HW_sim_object):
-    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, start_dequeue_pipe):
+    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, start_dequeue_pipe, global_state):
         super(EgressPipe, self).__init__(env, period)
         self.ready_in_pipe = ready_in_pipe
         self.ready_out_pipe = ready_out_pipe
@@ -11,6 +11,8 @@ class EgressPipe(HW_sim_object):
         self.pkt_out_pipe = pkt_out_pipe
         # this is a pipe from the top level block to tell the egress when to start dequeuing
         self.start_dequeue_pipe = start_dequeue_pipe
+
+        self.global_state = global_state
 
         # register processes for simulation
         self.run()
