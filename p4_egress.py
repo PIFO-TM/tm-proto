@@ -3,7 +3,7 @@ import simpy
 from hwsim_utils import *
 
 class EgressPipe(HW_sim_object):
-    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, start_dequeue_pipe, global_state):
+    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, start_dequeue_pipe, global_state, sched_alg):
         super(EgressPipe, self).__init__(env, period)
         self.ready_in_pipe = ready_in_pipe
         self.ready_out_pipe = ready_out_pipe
@@ -12,7 +12,8 @@ class EgressPipe(HW_sim_object):
         # this is a pipe from the top level block to tell the egress when to start dequeuing
         self.start_dequeue_pipe = start_dequeue_pipe
 
-        self.global_state = global_state
+        self.gstate = global_state
+        self.sched_alg = sched_alg
 
         # register processes for simulation
         self.run()
@@ -35,19 +36,26 @@ class EgressPipe(HW_sim_object):
             (meta, pkt) = yield self.pkt_in_pipe.get()
 
             # This is where the post-scheduling algorithm goes
-            yield self.env.process(self.post_invert_pkts(meta, pkt))
+            if self.sched_alg == "Invert_pkts":
+                yield self.env.process(self.invert_pkts_egress(meta, pkt))
+            elif self.sched_alg == "STFQ":
+                yield self.env.process(self.STFQ_egress(meta, pkt))
+
 
             # write metadata and pkt out
             self.pkt_out_pipe.put((meta, pkt))
 
-    def post_invert_pkts(self, meta, pkt):
+    def invert_pkts_egress(self, meta, pkt):
         print 'meta = {}'.format(str(meta))
         print 'pkt_id = {}'.format(pkt[IP].id)
         yield self.wait_clock()
 
-
-
-
+    def STFQ_egress(self, meta, pkt):
+        """
+        Egress processing for Start Time Fair Queueing
+        """
+        self.gstate.virtual_time = meta.sched_meta.start
+        yield self.wait_clock()
 
 
 

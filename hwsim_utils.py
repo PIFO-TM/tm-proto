@@ -2,17 +2,22 @@
 import sys, os
 from scapy.all import *
 import simpy
+from copy import deepcopy
+
+NSEC_PER_CYCLE = 5 # ns
 
 class StdMetadata(object):
-    def __init__(self, pkt_len, src_port, dst_port, ranks, leaf_node):
+    def __init__(self, pkt_len, src_port, dst_port, ranks, leaf_node, sched_meta=None):
         self.pkt_len = pkt_len
         self.src_port = src_port
         self.dst_port = dst_port
         self.ranks = ranks
         self.leaf_node = leaf_node
+        # scheduling alg specific metadata:
+        self.sched_meta = sched_meta
 
     def __str__(self):
-        return '{{ pkt_len: {}, src_port: {:08b}, dst_port: {:08b}, ranks: {}, leaf_node: {}}}'.format(self.pkt_len, self.src_port, self.dst_port, self.ranks, self.leaf_node)
+        return '{{ pkt_len: {}, src_port: {:08b}, dst_port: {:08b}, ranks: {}, leaf_node: {}, sched_meta: {}}}'.format(self.pkt_len, self.src_port, self.dst_port, self.ranks, self.leaf_node, self.sched_meta)
 
 def pad_pkt(pkt, size):
     if len(pkt) >= size:
@@ -31,4 +36,93 @@ class HW_sim_object(object):
 
     def wait_clock(self):
         return self.env.process(self.clock())
+
+
+class PktGenerator(HW_sim_object):
+    def __init__(self, env, period, pkt_out_pipe, rate, base_pkt, base_meta, pkt_mod_cb=None, pkt_limit=None):
+        """
+        rate (Gbps)
+        """
+        super(PktGenerator, self).__init__(env, period)
+        self.pkt_out_pipe = pkt_out_pipe
+        self.rate = rate
+        self.base_meta = base_meta
+        self.base_pkt = base_pkt
+        self.pkt_mod_cb = pkt_mod_cb
+        self.pkt_limit = pkt_limit
+        self.pkt_cnt = 0
+
+        self.run()
+
+    def run(self):
+        self.proc = self.env.process(self.gen_pkts())
+
+    def gen_pkts(self):
+        while (self.pkt_limit is None and not self.sim_done) or (self.pkt_limit is not None and self.pkt_cnt < self.pkt_limit):
+            pkt = self.base_pkt.copy()
+            meta = deepcopy(self.base_meta) 
+            # invoke provided callback to provide programmability
+            if self.pkt_mod_cb is not None:
+                self.pkt_mod_cb(meta, pkt)
+            # rate limiting
+            pkt_time = len(pkt)*8/self.rate # ns
+            cycle_delay = int(pkt_time/NSEC_PER_CYCLE + 0.5)
+            for i in range(cycle_delay):
+                yield self.wait_clock()
+            self.pkt_out_pipe.put((meta, pkt))
+            self.pkt_cnt += 1
+
+
+class PktReceiver(HW_sim_object):
+    def __init__(self, env, period, pkt_in_pipe, ready_pipe, rate):
+        super(PktReceiver, self).__init__(env, period)
+        self.pkt_in_pipe = pkt_in_pipe
+        self.ready_pipe = ready_pipe
+        self.rate = rate
+        self.pkts = []
+
+        self.run()
+
+    def run(self):
+        self.env.process(self.rcv_pkts())
+
+    def rcv_pkts(self):
+        while not self.sim_done:
+            self.ready_pipe.put(1)
+            (meta, pkt) = yield self.pkt_in_pipe.get()
+            pkt_time = len(pkt)*8/self.rate # ns
+            cycle_delay = int(pkt_time/NSEC_PER_CYCLE + 0.5)
+            for i in range(cycle_delay-2):
+                yield self.wait_clock()
+            self.pkts.append((self.env.now, meta, pkt))
+
+
+class Arbiter(HW_sim_object):
+    def __init__(self, env, period, input_pipes, output_pipe):
+        super(Arbiter, self).__init__(env, period)
+        self.input_pipes = input_pipes
+        self.output_pipe = output_pipe
+        self.pkts = []
+
+        self.run()
+
+    def run(self):
+        self.env.process(self.arbitrate())
+
+
+    def arbitrate(self):
+        """
+        Arbitrate between the input pipes and create one output pipe
+        """
+        while not self.sim_done:
+            for pipe in self.input_pipes:
+                if len(pipe.items) > 0:
+                    (meta, pkt) = yield pipe.get()
+                    self.output_pipe.put((meta, pkt))
+                    self.pkts.append((self.env.now, deepcopy(meta), pkt.copy()))
+                yield self.wait_clock()
+
+
+
+
 

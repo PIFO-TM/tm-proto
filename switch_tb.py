@@ -7,7 +7,6 @@ class Switch_testbench(HW_sim_object):
     def __init__(self, env, period):
         self.env = env
         self.period = period
-        self.sw_ready_in_pipe  = simpy.Store(env)
         self.sw_ready_out_pipe = simpy.Store(env)
         self.sw_pkt_in_pipe  = simpy.Store(env)
         self.sw_pkt_out_pipe = simpy.Store(env)
@@ -29,7 +28,7 @@ class Switch_testbench(HW_sim_object):
 
         yield self.wait_clock()
 
-    def cleanup_sim(self):
-        yield self.env.process(self.switch.cleanup_sim())
+    def cleanup_switch(self):
+        yield self.env.process(self.switch.cleanup_switch())
 
 

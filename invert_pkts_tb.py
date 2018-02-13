@@ -8,16 +8,15 @@ class Invert_pkts_tb(Switch_testbench):
     def __init__(self, env, period):
         super(Invert_pkts_tb, self).__init__(env, period)
 
+        self.sched_alg = "Invert_pkts"
         self.sched_tree_shape = {0: []}
-        self.switch = Switch(self.env, self.period, self.sw_ready_in_pipe, self.sw_ready_out_pipe, self.sw_pkt_in_pipe, self.sw_pkt_out_pipe, self.start_dequeue_pipe, self.sched_tree_shape)
+        self.switch = Switch(self.env, self.period, self.sw_ready_out_pipe, self.sw_pkt_in_pipe, self.sw_pkt_out_pipe, self.start_dequeue_pipe, self.sched_tree_shape, self.sched_alg)
 
         self.env.process(self.gen_pkts())
         self.env.process(self.rcv_pkts()) 
 
     def gen_pkts(self):
         for i in range(10):
-            # wait for switch to be ready to receive a pkt
-            yield self.sw_ready_in_pipe.get()
             pkt_id = i
             pkt = Ether()/IP(id=pkt_id)/TCP()/'THIS IS A TEST PKT!!'
             ranks = [0]
@@ -54,7 +53,7 @@ class Invert_pkts_tb(Switch_testbench):
                 done = True
 
         yield self.env.process(self.reconcile_pkts(expected_pkts, rcvd_pkts))
-        yield self.env.process(self.cleanup_sim())
+        yield self.env.process(self.cleanup_switch())
 
 def main():
     env = simpy.Environment()

@@ -50,13 +50,14 @@ class PIFO(HW_sim_object):
             for i in range(self.read_latency):
                 yield self.wait_clock()
             # try to read data from pifo
-            try:
-                (rank, data) = heappop(self.values)
-            except IndexError as e:
-                print >> sys.stderr, "ERROR: Tried to dequeue from an empty PIFO"
-                sys.exit(1)
-            # write data back
-            self.r_out_pipe.put((rank, data))
+            read_complete = False
+            while not read_complete and not self.sim_done:
+                if len(self.values) > 0:
+                    (rank, data) = heappop(self.values)
+                    self.r_out_pipe.put((rank, data))
+                    read_complete = True
+                else:
+                    yield self.wait_clock()
 
 class Scheduling_tree_node(PIFO):
     def __init__(self, env, period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, children, parent):
