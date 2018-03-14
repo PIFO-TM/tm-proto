@@ -3,33 +3,38 @@ import simpy
 from hwsim_utils import *
 from switch import Switch
 from switch_tb import Switch_testbench
-from p4_ingress import STFQMeta
+from p4_ingress import MinRateIngressState
 from stats_utils import StatsGenerator
 import matplotlib
 import matplotlib.pyplot as plt
 
-class STFQ_tb(Switch_testbench):
+class MinRate_tb(Switch_testbench):
     def __init__(self, env, period):
-        super(STFQ_tb, self).__init__(env, period)
+        super(MinRate_tb, self).__init__(env, period)
 
-        self.sched_alg = "STFQ"
-        self.sched_tree_shape = {0: []}
-        self.switch = Switch(self.env, self.period, self.sw_ready_out_pipe, self.sw_pkt_in_pipe, self.sw_pkt_out_pipe, self.start_dequeue_pipe, self.sched_tree_shape, self.sched_alg)
+        self.sched_alg = "MinRate"
+        self.sched_tree_shape = {0: [1, 2]}
+        rates = [1, 2, 10, 25]
+        flow_min_rate = {}
+        for i in range(len(rates)):
+            flow_min_rate[i] = 2
+        istate = MinRateIngressState(flow_min_rate)
+        self.switch = Switch(self.env, self.period, self.sw_ready_out_pipe, self.sw_pkt_in_pipe, self.sw_pkt_out_pipe, self.start_dequeue_pipe, self.sched_tree_shape, self.sched_alg, istate)
 
         # start dequeueing immediately
         self.start_dequeue_pipe.put(1)
 
         # create flows
-        rates = [10, 13, 20, 25]
         num_flows = len(rates)
-        base_sport = 100
         self.generators = []
         self.pkt_gen_pipes = []
         for i in range(num_flows):
             pipe = simpy.Store(env)
             rate = rates[i] # Gbps
-            pkt = Ether()/IP()/TCP(sport=base_sport+i)/('\x00'*10)
-            meta = StdMetadata(len(pkt), 0b00000001, 0b00000100, [0], 0, sched_meta=STFQMeta())
+            flowID = i
+            pkt = Ether()/IP()/TCP(sport=flowID)/('\x00'*10)
+            ranks = [0, 0]
+            meta = StdMetadata(len(pkt), 0b00000001, 0b00000100, ranks, 0)
             pkt_gen = PktGenerator(env, period, pipe, rate, pkt, meta, cycle_limit=5000)
             self.generators.append(pkt_gen)
             self.pkt_gen_pipes.append(pipe)
@@ -70,7 +75,7 @@ def plot_stats(input_pkts, output_pkts, egress_link_rate):
     output_pkts = [(tup[0]*5, tup[2]) for tup in output_pkts]
     print 'input_pkts:  (start, end) = ({} ns, {} ns)'.format(input_pkts[0][0], input_pkts[-1][0])
     print 'output_pkts: (start, end) = ({} ns, {} ns)'.format(output_pkts[0][0], output_pkts[-1][0])
-    flowID_tuple = ((IP, 'proto'), (IP, 'src'), (IP, 'dst'), (IP, 'sport'), (IP, 'dport'))
+    flowID_tuple = ((IP, 'sport'),)
     input_stats = StatsGenerator(flowID_tuple, input_pkts)
     output_stats = StatsGenerator(flowID_tuple, output_pkts)
     # create plots
@@ -90,7 +95,7 @@ def plot_stats(input_pkts, output_pkts, egress_link_rate):
 def main():
     env = simpy.Environment()
     period = 1
-    tb = STFQ_tb(env, period)
+    tb = MinRate_tb(env, period)
     env.run()
 
     plot_stats(tb.arbiter.pkts, tb.receiver.pkts, tb.egress_link_rate)

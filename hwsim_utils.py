@@ -39,7 +39,7 @@ class HW_sim_object(object):
 
 
 class PktGenerator(HW_sim_object):
-    def __init__(self, env, period, pkt_out_pipe, rate, base_pkt, base_meta, pkt_mod_cb=None, pkt_limit=None):
+    def __init__(self, env, period, pkt_out_pipe, rate, base_pkt, base_meta, pkt_mod_cb=None, pkt_limit=None, cycle_limit=None):
         """
         rate (Gbps)
         """
@@ -52,10 +52,18 @@ class PktGenerator(HW_sim_object):
         self.pkt_limit = pkt_limit
         self.pkt_cnt = 0
 
+        if type(cycle_limit) == int:
+            self.env.process(self.start_timer(cycle_limit))
+
         self.run()
 
     def run(self):
         self.proc = self.env.process(self.gen_pkts())
+
+    def start_timer(self, cycle_limit):
+        for i in range(cycle_limit):
+            yield self.wait_clock()  
+        self.sim_done = True
 
     def gen_pkts(self):
         while (self.pkt_limit is None and not self.sim_done) or (self.pkt_limit is not None and self.pkt_cnt < self.pkt_limit):

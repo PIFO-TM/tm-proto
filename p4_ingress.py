@@ -3,7 +3,7 @@ import simpy
 from hwsim_utils import *
 
 class IngressPipe(HW_sim_object):
-    def __init__(self, env, period, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, global_state, sched_alg):
+    def __init__(self, env, period, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, global_state, sched_alg, istate=None):
         super(IngressPipe, self).__init__(env, period)
         self.ready_out_pipe = ready_out_pipe
         self.pkt_in_pipe = pkt_in_pipe
@@ -12,10 +12,16 @@ class IngressPipe(HW_sim_object):
         self.gstate = global_state
         self.sched_alg = sched_alg
 
-        if sched_alg == "Invert_pkts":
+        if istate is not None:
+            self.istate = istate
+        elif sched_alg == "Invert_pkts":
             self.istate = InvPktsIngressState()
         elif sched_alg == "STFQ":
             self.istate = STFQIngressState()
+        elif sched_alg == "HSTFQ":
+            self.istate = HSTFQIngressState()
+        elif sched_alg == "MinRate":
+            self.istate = MinRateIngressState()
 
         # register processes for simulation
         self.run()
@@ -36,11 +42,19 @@ class IngressPipe(HW_sim_object):
                 yield self.env.process(self.invert_pkts(meta, pkt))
             elif self.sched_alg == "STFQ":
                 yield self.env.process(self.STFQ(meta, pkt))
+            elif self.sched_alg == "HSTFQ":
+                yield self.env.process(self.HSTFQ(meta, pkt))
+            elif self.sched_alg == "MinRate":
+                yield self.env.process(self.MinRate(meta, pkt))
 
             # wait until the scheduling_tree is ready to receive
             yield self.ready_out_pipe.get()
             # write metadata and pkt out
             self.pkt_out_pipe.put((meta, pkt))
+
+    #####################
+    ## Scheduling Algs ##
+    #####################
 
     def invert_pkts(self, meta, pkt):
         """
@@ -71,6 +85,76 @@ class IngressPipe(HW_sim_object):
         meta.sched_meta.start = start
         yield self.wait_clock()
 
+    def HSTFQ(self, meta, pkt):
+        """
+        Hierarchical Start Time Fair Queueing (HSTFQ)
+        """
+        # flowID is just sport field
+        flowID = pkt.sport
+        classID = pkt.sport % 2
+
+        # rank computation for leaf node
+        if flowID in self.istate.flow_last_finish.keys():
+            start = max(self.gstate.flow_virtual_time[classID], self.istate.flow_last_finish[flowID])
+        else:
+            start = self.gstate.flow_virtual_time[classID]
+        self.istate.flow_last_finish[flowID] = start + meta.pkt_len / self.istate.flow_weights[flowID]
+        meta.ranks[0] = start
+        meta.leaf_node = classID + 1
+        meta.sched_meta.flow_start = start
+
+        # rank computation for root node
+        if classID in self.istate.class_last_finish.keys():
+            start = max(self.gstate.class_virtual_time, self.istate.class_last_finish[classID])
+        else:
+            start = self.gstate.class_virtual_time
+        self.istate.class_last_finish[classID] = start + meta.pkt_len / self.istate.class_weights[classID]
+        meta.ranks[1] = start
+        meta.sched_meta.class_start = start
+
+        yield self.wait_clock()
+
+    def MinRate(self, meta, pkt):
+        """
+        Minimum Rate Gaurantees for flows
+        """
+        BURST_SIZE = 1500 # bytes
+        flowID = pkt.sport
+        assert(flowID in self.istate.flow_min_rate.keys())
+        min_rate = self.istate.flow_min_rate[flowID]
+
+        flow_tb = self.istate.flow_tb
+        if flowID not in self.istate.flow_last_time.keys():
+            self.istate.flow_last_time[flowID] = self.env.now
+        if flowID not in flow_tb.keys():
+            flow_tb[flowID] = BURST_SIZE
+
+        # Replenish tokens
+        flow_tb[flowID] = flow_tb[flowID] + min_rate * (self.env.now - self.istate.flow_last_time[flowID])
+        if (flow_tb[flowID] > BURST_SIZE):
+            flow_tb[flowID] = BURST_SIZE
+
+        # Check if we have enough tokens
+        if (flow_tb[flowID] > len(pkt)):
+            # under min rate
+            over_min = 0
+            flow_tb[flowID] = flow_tb[flowID] - len(pkt)
+        else:
+            # over min rate
+            over_min = 1
+
+        self.istate.flow_last_time[flowID] = self.env.now
+        meta.ranks[0] = self.env.now # FIFO order at the leaf
+        meta.ranks[1] = over_min
+        meta.leaf_node = over_min + 1
+
+        yield self.wait_clock()
+
+
+###################
+## Ingress State ##
+###################
+
 class InvPktsIngressState(object):
     def __init__(self):
         self.pkt_cnt = 0
@@ -84,10 +168,40 @@ class STFQIngressState(object):
         #  weights: maps flowID to flow weight 
         self.weights = {}
 
+class HSTFQIngressState(object):
+    def __init__(self, flow_weights={}, class_weights={}):
+        #  last_finish: maps flowID and classID to virtual finish time of previous pkt in flow
+        self.flow_last_finish = {}
+        self.class_last_finish = {}
+        #  weights: maps flowID and classID to weights
+        self.flow_weights = flow_weights
+        self.class_weights = class_weights
+
+class MinRateIngressState(object):
+    def __init__(self, flow_min_rate):
+        self.flow_min_rate = flow_min_rate
+        self.flow_tb = {}
+        self.flow_last_time = {}
+
+
+##############
+## Metadata ##
+##############
+
 class STFQMeta(object):
     def __init__(self):
         self.start = 0
 
     def __str__(self):
         return 'start = {}'.format(self.start)
+
+
+class HSTFQMeta(object):
+    def __init__(self):
+        self.flow_start = 0
+        self.class_start = 0
+
+    def __str__(self):
+        return 'flow_start = {}'.format(self.flow_start)
+        return 'class_start = {}'.format(self.class_start)
 

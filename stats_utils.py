@@ -71,18 +71,19 @@ class StatsGenerator(object):
         return flow_rates
 
 
-    def plot_rates(self, title, ymax=None):
+    def plot_rates(self, title, ymax=None, linewidth=1):
         """
         Plots the flow rates
         """
         for flowID, rate_points in self.flow_rates.items(): 
             times = [point[0] for point in rate_points]
             rates = [point[1] for point in rate_points]
-            plt.plot(times, rates, label='{}'.format(flowID))
+            plt.plot(times, rates, label='{}'.format(flowID), linewidth=linewidth)
         plt.xlabel('time (ns)')
         plt.ylabel('rate (Gbps)')
         plt.title(title)
-        plt.legend()
+        #plt.legend(loc='lower right')
+        plt.legend(loc='upper left')
         if ymax is not None:
             plt.ylim(0, ymax)
 
