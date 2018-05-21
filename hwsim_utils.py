@@ -39,7 +39,7 @@ class HW_sim_object(object):
 
 
 class PktGenerator(HW_sim_object):
-    def __init__(self, env, period, pkt_out_pipe, rate, base_pkt, base_meta, pkt_mod_cb=None, pkt_limit=None, cycle_limit=None):
+    def __init__(self, env, period, pkt_out_pipe, rate, base_pkt, base_meta, pkt_mod_cb=None, pkt_limit=None, cycle_limit=None, burst_size=None, burst_delay=None):
         """
         rate (Gbps)
         """
@@ -51,6 +51,13 @@ class PktGenerator(HW_sim_object):
         self.pkt_mod_cb = pkt_mod_cb
         self.pkt_limit = pkt_limit
         self.pkt_cnt = 0
+        self.burst_size = burst_size
+        self.burst_delay = burst_delay
+        self.burst_cnt = 0
+        self.burst_delay_cnt = 0
+        self.DELAY = 0
+        self.BURST = 1
+        self.snd_state = self.DELAY
 
         if type(cycle_limit) == int:
             self.env.process(self.start_timer(cycle_limit))
@@ -67,6 +74,26 @@ class PktGenerator(HW_sim_object):
 
     def gen_pkts(self):
         while (self.pkt_limit is None and not self.sim_done) or (self.pkt_limit is not None and self.pkt_cnt < self.pkt_limit):
+            if self.burst_size is not None and self.burst_delay is not None:
+                if self.snd_state == self.BURST and self.burst_cnt < self.burst_size:
+                    # send pkts in bursts
+                    yield self.env.process(self.send_pkt())
+                    self.burst_cnt += 1
+                    if self.burst_cnt == self.burst_size:
+                        self.snd_state = self.DELAY
+                        self.burst_cnt = 0
+                elif self.snd_state == self.DELAY:
+                    self.burst_delay_cnt += 1
+                    if self.burst_delay_cnt == self.burst_delay:
+                        self.burst_delay_cnt = 0
+                        self.snd_state = self.BURST
+                    yield self.wait_clock()
+                else:
+                    yield self.wait_clock()
+            else:
+                yield self.env.process(self.send_pkt())
+
+    def send_pkt(self):
             pkt = self.base_pkt.copy()
             meta = deepcopy(self.base_meta) 
             # invoke provided callback to provide programmability

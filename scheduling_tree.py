@@ -2,11 +2,11 @@
 import sys, os
 from scapy.all import *
 import simpy
-from heapq import heappush, heappop
+from heapq import heappush, heappop, heapify
 from hwsim_utils import *
 
 class PIFO(HW_sim_object):
-    def __init__(self, env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, write_latency=1, read_latency=1):
+    def __init__(self, env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, write_latency=1, read_latency=1, max_size=None):
         super(PIFO, self).__init__(env, period)
         self.r_in_pipe = r_in_pipe
         self.r_out_pipe = r_out_pipe
@@ -15,6 +15,9 @@ class PIFO(HW_sim_object):
         self.write_latency = write_latency
         self.read_latency = read_latency
         self.values = []
+
+        self.max_size = max_size
+        self.drop_cnt = 0
 
         # register processes for simulation
         self.run()
@@ -34,7 +37,13 @@ class PIFO(HW_sim_object):
             for i in range(self.write_latency):
                 yield self.wait_clock()
             # write pkt and metadata into pifo
-            heappush(self.values, (rank, data))
+            if self.max_size is None or len(self.values) < self.max_size:
+                heappush(self.values, (rank, data))
+            else:
+                heappush(self.values, (rank, data))
+                self.values.remove(max(self.values))
+                heapify(self.values)
+                self.drop_cnt += 1
             # indicate write_completion
             done = 1
             self.w_out_pipe.put(done)    
@@ -60,8 +69,8 @@ class PIFO(HW_sim_object):
                     yield self.wait_clock()
 
 class Scheduling_tree_node(PIFO):
-    def __init__(self, env, period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, children, parent):
-        super(Scheduling_tree_node, self).__init__(env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe)
+    def __init__(self, env, period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, children, parent, max_size=None):
+        super(Scheduling_tree_node, self).__init__(env, period, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, max_size=max_size)
         self.ID = ID
         self.children = children
         self.parent = parent
@@ -73,7 +82,7 @@ class Scheduling_tree_node(PIFO):
         return '[{}, [{}]]'.format(self.ID, ','.join(children_strs))
 
 class Scheduling_tree(HW_sim_object):
-    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, shape):
+    def __init__(self, env, period, ready_in_pipe, ready_out_pipe, pkt_in_pipe, pkt_out_pipe, shape, max_node_size=None):
         """Shape specifies the shape of the scheduling tree:
            e.g. single pifo  --  0
                 2-level tree -- {0: [1, 2]}
@@ -85,10 +94,11 @@ class Scheduling_tree(HW_sim_object):
         self.pkt_in_pipe = pkt_in_pipe
         self.pkt_out_pipe = pkt_out_pipe
         self.shape = shape
+        self.max_node_size = max_node_size
         # this maps the node ID to the node itself 
         self.nodes = {}
         # tree is a pointer to the root node
-        self.tree = self.make_tree(shape, None)
+        self.tree = self.make_tree(shape, None, max_node_size)
 
         # register processes for simulation
         self.run()
@@ -100,7 +110,7 @@ class Scheduling_tree(HW_sim_object):
     def __str__(self):
         return str(self.tree)
 
-    def make_tree(self, shape, parent):
+    def make_tree(self, shape, parent, max_node_size):
         """
         Recursive function to make scheduling tree
         """
@@ -112,7 +122,7 @@ class Scheduling_tree(HW_sim_object):
             # base case
             children = []
             ID = shape
-            node = Scheduling_tree_node(self.env, self.period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, children, parent)
+            node = Scheduling_tree_node(self.env, self.period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, children, parent, max_node_size)
         elif (type(shape) == dict):
             keys = shape.keys()
             vals = shape.values()
@@ -121,7 +131,7 @@ class Scheduling_tree(HW_sim_object):
                 print >> sys.stderr, "ERROR: incorrct format of shape: {}".format(shape)
                 sys.exit(1)
             ID = keys[0]
-            node = Scheduling_tree_node(self.env, self.period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, [], parent)
+            node = Scheduling_tree_node(self.env, self.period, ID, r_in_pipe, r_out_pipe, w_in_pipe, w_out_pipe, [], parent, max_node_size)
             children = []
             for child in vals[0]:
                 child_node = self.make_tree(child, node)

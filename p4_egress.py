@@ -42,9 +42,7 @@ class EgressPipe(HW_sim_object):
                 yield self.env.process(self.STFQ_egress(meta, pkt))
             elif self.sched_alg == "HSTFQ":
                 # TODO: HSTFQ actually seems to work pretty well without this... why???
-                yield self.env.process(self.HSTFQ_egress(meta, pkt))
-            elif self.sched_alg == "MinRate":
-                yield self.env.process(self.MinRate_egress(meta, pkt))
+                yield self.env.process(self.HSTFQ_egress(meta, pkt)) 
 
             # write metadata and pkt out
             self.pkt_out_pipe.put((meta, pkt))
@@ -70,11 +68,8 @@ class EgressPipe(HW_sim_object):
         self.gstate.class_virtual_time = meta.sched_meta.class_start
         yield self.wait_clock()
 
-    def MinRate_egress(self, meta, pkt):
-        """
-        MinRate egress processing
-        """
-        yield self.wait_clock()
+
+
 
 
 

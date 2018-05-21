@@ -12,6 +12,9 @@ class IngressPipe(HW_sim_object):
         self.gstate = global_state
         self.sched_alg = sched_alg
 
+        self.pkts = []
+        self.ranks = []
+
         if istate is not None:
             self.istate = istate
         elif sched_alg == "Invert_pkts":
@@ -22,6 +25,12 @@ class IngressPipe(HW_sim_object):
             self.istate = HSTFQIngressState()
         elif sched_alg == "MinRate":
             self.istate = MinRateIngressState()
+        elif sched_alg == "RR":
+            self.istate = RRIngressState()
+        elif sched_alg == "WRR":
+            self.istate = WRRIngressState()
+        elif sched_alg == "Strict":
+            self.istate = None 
 
         # register processes for simulation
         self.run()
@@ -46,11 +55,25 @@ class IngressPipe(HW_sim_object):
                 yield self.env.process(self.HSTFQ(meta, pkt))
             elif self.sched_alg == "MinRate":
                 yield self.env.process(self.MinRate(meta, pkt))
+            elif self.sched_alg == "RR":
+                yield self.env.process(self.RR(meta, pkt))
+            elif self.sched_alg == "WRR":
+                yield self.env.process(self.WRR(meta, pkt))
+            elif self.sched_alg == "Strict":
+                yield self.env.process(self.Strict(meta, pkt))
+
+            # record pkts and ranks
+            self.pkts.append(pkt)
+            self.ranks.append(meta.ranks[0])
 
             # wait until the scheduling_tree is ready to receive
             yield self.ready_out_pipe.get()
             # write metadata and pkt out
             self.pkt_out_pipe.put((meta, pkt))
+
+        wrpcap(PCAP_FILE, self.pkts)
+        with open(RANK_FILE, 'w') as f:
+            json.dump(self.ranks, f)
 
     #####################
     ## Scheduling Algs ##
@@ -150,6 +173,62 @@ class IngressPipe(HW_sim_object):
 
         yield self.wait_clock()
 
+    def RR(self, meta, pkt):
+        """
+        Round Robin Scheduling
+        """
+        # flowID is just sport field
+        flowID = pkt.sport
+
+        if flowID not in self.istate.flow_last_rank.keys():
+            rank = self.istate.max_rank + 1
+            self.istate.num_active_flows += 1
+        else:
+            rank = self.istate.flow_last_rank[flowID] + self.istate.num_active_flows
+
+        self.istate.max_rank = rank
+        self.istate.flow_last_rank[flowID] = rank
+        meta.ranks[0] = rank
+        meta.leaf_node = 0
+        yield self.wait_clock()
+
+    def WRR(self, meta, pkt):
+        """
+        Weighted Round Robin Scheduling
+        """
+        # flowID is just sport field
+        flowID = pkt.sport
+
+        if flowID not in self.istate.flow_last_rank.keys():
+            rank = self.istate.max_rank + 1
+            self.istate.num_active_flows += 1
+            self.istate.flow_cnt[flowID] = 1
+        else:
+            weight = self.istate.flow_weight[flowID]
+            if (self.istate.flow_cnt[flowID] == weight):
+                rank = self.istate.flow_last_rank[flowID] + self.istate.num_active_flows
+                self.istate.flow_cnt[flowID] = 1
+            else:
+                rank = self.istate.flow_last_rank[flowID]
+                self.istate.flow_cnt[flowID] += 1
+
+        if rank > self.istate.max_rank:
+            self.istate.max_rank = rank
+        self.istate.flow_last_rank[flowID] = rank
+        meta.ranks[0] = rank
+        meta.leaf_node = 0
+        yield self.wait_clock()
+
+    def Strict(self, meta, pkt):
+        """
+        Strict Priority Scheduling
+        """
+        # flowID is just sport field
+        flowID = pkt.sport
+        rank = flowID
+        meta.ranks[0] = rank
+        meta.leaf_node = 0
+        yield self.wait_clock()
 
 ###################
 ## Ingress State ##
@@ -183,6 +262,19 @@ class MinRateIngressState(object):
         self.flow_tb = {}
         self.flow_last_time = {}
 
+class RRIngressState(object):
+    def __init__(self):
+        self.max_rank = 0
+        self.flow_last_rank = {}
+        self.num_active_flows = 0
+
+class WRRIngressState(object):
+    def __init__(self, weights):
+        self.max_rank = 0
+        self.flow_cnt = {}
+        self.flow_last_rank = {}
+        self.num_active_flows = 0
+        self.flow_weight = weights
 
 ##############
 ## Metadata ##
