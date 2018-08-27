@@ -27,10 +27,10 @@ class RR_tb(Switch_testbench):
         for i in range(num_flows):
             pipe = simpy.Store(env)
             rate = rates[i] # Gbps
-            pkt = Ether()/IP()/TCP(sport=base_sport+i)/('\x00'*1446) # '\x00'*10
-            #pkt = Ether()/IP()/TCP(sport=base_sport+i)/('\x00'*10)
+            #pkt = Ether()/IP()/TCP(sport=base_sport+i)/('\x00'*1446) # '\x00'*10
+            pkt = Ether()/IP()/TCP(sport=base_sport+i)/('\x00'*10)
             meta = StdMetadata(len(pkt), 0b00000001, 0b00000100, [0], 0, sched_meta=None)
-            pkt_gen = PktGenerator(env, period, pipe, rate, pkt, meta, cycle_limit=5000*40) #pkt_limit=10)
+            pkt_gen = PktGenerator(env, period, pipe, rate, pkt, meta, cycle_limit=5000) #pkt_limit=10)
             self.generators.append(pkt_gen)
             self.pkt_gen_pipes.append(pipe)
 
